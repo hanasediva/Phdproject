@@ -8,7 +8,7 @@ The project consisted of collecting 3-weeks of intensitive and high frequency da
 Included in this repository are the following files:
 1) Example of data loading, merging, and cleansing in R, to prepare the initial dataset for further cleansing and analysis. (see file Thesis_Chapter7_data_cleansing.R)
 2) Example of additional data cleansing to prepare data for statistical analysis.  Descriptive statistics are shown for steps count data, including visualisations (see file Thesis_Chapter7_final_data_cleansing_descriptivestats_Rmd)  Note:  I used an R Markdown file type.
-3) Using machine learning in R to identify predictors to health behaviour change. (see file Thesis_Chapter8_ML_R_code.Rmd)
+3) Using machine learning in R to identify predictors to health behaviour change. (see file Thesis_Chapter8_ML_R.Rmd). Note:  I used an R Markdown file type.
 4) Using machine learning in Python to identify predictors to health behaviour change. (see file Thesis_Python_feature_selection_Dec23.ipynb)
 
 
