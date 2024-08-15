@@ -1,0 +1,1382 @@
+---
+title: "Thesis_study4_chapter8_ML_code"
+author: "Hana Sediva"
+date: "2024-08-05"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+This file is used to conduct feature selection on the intervention data, using Random Forest algorithm.  The analysis is using 22 time-varying features and 20 time-constant features with 10 outcomes to identify groups of predictors with the greatest impact on intervention outcomes.
+```{r}
+#load libraries
+install.packages("tidyverse") # data management package
+install.packages("dplyr") # data management package
+install.packages("lme4") # multilevel package
+install.packages("plm") # fixed effect package
+install.packages("Hmisc") #correlation
+install.packages("corrplot") #plotting
+install.packages("caret") #feature selection ML package
+install.packages("mlbench") # used for benchmarking
+install.packages("ggcorrplot") #plotting
+install.packages("randomForest") #ML algorithm
+install.packages('broom') # for glance function()
+
+library(ggcorrplot)
+library("randomForest")
+library(mlbench)
+library("caret")
+library(corrplot)
+library("tidyverse")
+library("dplyr")
+library("lme4") 
+library("plm")
+library("zoo")
+library("Hmisc")
+library("ggpubr")
+library(broom)
+```
+
+
+
+Create a dataframe with 22 time-varying predictors and 10 outcomes
+```{r}
+dfStudy4_final_intervention <- subset(dfStudy4_final, wave >= 1 & wave <= 14)
+dfPredictors <- subset(dfStudy4_final_intervention, select = c(
+#time-varying predictors:
+"ema_daily_total_surveys_answered", 
+"ema_daily_total_education_shown",
+"ema_daily_total_education_read",
+"ema_daily_education_library_accessed_binary",
+"ema_veg_portions_goal",
+"ema_fruit_portions_goal",
+"ema_breakfast_colourful_rating_no_NA",
+"ema_breakfast_colourful_rating_binary",
+"ema_lunch_colourful_rating_no_NA",
+"ema_lunch_colourful_rating_binary",
+"ema_dinner_colourful_rating_no_NA",
+"ema_dinner_colourful_rating_binary",
+"ema_had_alcohol_last_night",
+"ema_achieved_planned_exercise_binary",
+"ema_group_exercise_participation_binary",
+"ema_morning_exercise_plan_binary",
+"ema_afternoon_exercise_plan_binary",
+"ema_evening_exercise_plan_binary",
+"ema_steps_goal_binary",
+"ema_steps_goal_number_no_NA",
+"ema_human_coach_interaction",
+"ema_sleep_quality_transformed_scale",
+
+
+#Outcome:
+"daily_total_steps_scaled",
+"daily_total_sleep_scaled",
+"daily_deep_sleep_scaled",
+"daily_total_veg",
+"daily_total_fruit",
+"daily_total_water",
+"daily_total_caffeine",
+"daily_total_alcohol",
+"daily_total_snacks",
+"daily_total_meals"
+
+))
+```
+
+
+Create a dataframe with 20 time-constant predictors and 10 outcomes
+```{r}
+#constant predictors:
+dfPredictors_constant <- subset(dfStudy4_final, select = c(
+"survey_pre_age_group_fct",
+"survey_pre_location_fct",
+"survey_pre_tech_user_fct", #binary, asked at baseline
+"survey_pre_health_status_fct", #scale, asked at baseline
+"survey_pre_HRT_fct", #binary, never took or currently/in the past
+"survey_pre_antidepressants_fct",
+"survey_pre_CBT_fct",
+"survey_pre_smoking_fct",
+"survey_pre_generation_british_fct",
+"ema_group_exercise_participation_fct",
+"survey_pre_marital_status_fct",
+"survey_pre_num_children_fct",
+"survey_pre_children_home_fct",
+"survey_pre_ethnicity_fct",
+"survey_pre_qualification_fct",
+"survey_pre_employment_fct",
+"survey_pre_income_fct",
+"survey_pre_meno_stage_fct",
+"survey_pre_meno_perspective_fct",
+"survey_pre_meno_knowledge_fct",
+
+
+#Outcome:
+"daily_total_steps_scaled",
+"daily_total_sleep_scaled",
+"daily_deep_sleep_scaled",
+"daily_total_veg",
+"daily_total_fruit",
+"daily_total_water",
+"daily_total_caffeine",
+"daily_total_alcohol",
+"daily_total_snacks",
+"daily_total_meals"
+
+))
+```
+
+
+Create correlation matrix and write to a file
+```{r}
+w = dfStudy4_final_intervention$response_weight
+
+matStudy4 <- as.matrix(dfPredictors)
+
+weighted_corr <- cov.wt(matStudy4, wt = w, cor = TRUE)
+corr_matrix <- weighted_corr$cor
+
+write.csv(corr_matrix, 
+          file = "C:/R_code/study4/Weighted_spearman_cor_matrix_Aug5.csv", 
+          row.names = FALSE)
+```
+
+
+
+**** Steps count outcome ****
+
+Time-constant predictors:
+Create an RFE model with 20 constant predictors for steps count outcome
+```{r}
+set.seed(7)
+# load the library
+library(mlbench)
+library(caret)
+
+# define the control using a random forest selection function
+control <- rfeControl(functions=rfFuncs, method="cv", number=10)
+# run the RFE algorithm.  Use 20 time-constant predictors.
+results <- rfe(dfPredictors_constant[, 1:20], dfPredictors_constant[[21]], sizes=c(1:20), rfeControl=control)
+# summarize the results
+print(results)
+# list the chosen features
+predictors(results)
+
+# plot the results
+plot(results, type=c("g", "o"))
+
+#summary(results$results$RMSE.)
+summary(results)
+
+
+#display top 10 predictors
+varimp_data <- data.frame(feature = row.names(varImp(results))[1:17],
+                          importance = varImp(results)[1:17, 1])
+#plot top 10 predictors
+ggplot(data = varimp_data, 
+       aes(x = reorder(feature, importance), y = importance, fill = feature)) +
+  geom_bar(stat="identity") + #labs(x = "Features", y = "Variable Importance") + 
+  geom_text(aes(label = round(importance, 2)), vjust=1.6, color="white", size=4) + 
+  theme_bw() + theme(legend.position = "none") + coord_flip() +
+  labs(y = "Variable Importance",
+       x = "Features",
+      color = "blue",
+      linetype = "blue",
+      title = "Top 17 time-constant predictors for steps count",
+      subtitle = "Recursive feature elimination",
+      caption = "Data: Intervention data including baseline (wave 0-14)")
+```
+
+
+Create a linear model with the selected subset of 17 time-constant predictors and identify statistically significant predictors for steps count outcome.
+```{r}
+dfPredictors_0 <- data.frame(dfPredictors_constant[c(1:20,21)])
+
+dfPredictors_1 <- select(dfPredictors_0, daily_total_steps_scaled,
+                         survey_pre_location_fct,
+                         survey_pre_meno_perspective_fct,
+                         survey_pre_ethnicity_fct,
+                         survey_pre_meno_stage_fct,
+                         survey_pre_CBT_fct,
+                         ema_group_exercise_participation_fct,
+                         survey_pre_income_fct,
+                         survey_pre_meno_knowledge_fct,
+                         survey_pre_age_group_fct,
+                         survey_pre_health_status_fct,
+                         survey_pre_HRT_fct,
+                         survey_pre_antidepressants_fct,
+                         survey_pre_generation_british_fct,
+                         survey_pre_num_children_fct,
+                         survey_pre_smoking_fct,
+                         survey_pre_marital_status_fct,
+                         survey_pre_qualification_fct
+                         )
+model_constant1 <- lm(daily_total_steps_scaled ~., data = dfPredictors_1)
+
+summary(model_constant1)
+
+glance(model_constant1) %>%
+  dplyr::select(r.squared, adj.r.squared, sigma,statistic, AIC, BIC, p.value)
+
+```
+
+
+Time-varying predictors:
+Create an RFE model with 22 time-varying predictors for steps count outcome
+```{r}
+set.seed(7)
+# load the library
+library(mlbench)
+library(caret)
+
+# define the control using a random forest selection function
+control <- rfeControl(functions=rfFuncs, method="cv", number=10)
+# run the RFE algorithm
+results <- rfe(dfPredictors[, 1:22], dfPredictors[[23]], sizes=c(1:22), rfeControl=control)
+# summarize the results
+print(results)
+# list the chosen features
+predictors(results)
+
+# plot the results
+plot(results, type=c("g", "o"))
+
+#display top 10 predictors
+varimp_data <- data.frame(feature = row.names(varImp(results))[1:6],
+                          importance = varImp(results)[1:6, 1])
+#plot top 10 predictors
+ggplot(data = varimp_data, 
+       aes(x = reorder(feature, importance), y = importance, fill = feature)) +
+  geom_bar(stat="identity") + #labs(x = "Features", y = "Variable Importance") + 
+  geom_text(aes(label = round(importance, 2)), vjust=1.6, color="white", size=4) + 
+  theme_bw() + theme(legend.position = "none") + coord_flip()  +
+  labs(y = "Variable Importance",
+       x = "Features",
+      color = "blue",
+      linetype = "blue",
+      title = "Top 6 time-varying predictors for steps count",
+      subtitle = "Recursive feature elimination",
+      caption = "Data: Intervention data excluding baseline (wave 1-14)")
+```
+
+
+Create a linear model with 6 time-varying predictors and identifying those that are statistically significant in predicting steps count outcome.
+```{r}
+dfPredictors_0 <- data.frame(dfPredictors[c(1:22,23)])
+dfPredictors_1 <- select(dfPredictors_0, daily_total_steps_scaled,
+                         ema_achieved_planned_exercise_binary, 
+                         ema_steps_goal_number_no_NA,
+                         ema_veg_portions_goal, 
+                         ema_group_exercise_participation_binary,
+                         ema_morning_exercise_plan_binary,
+                         ema_steps_goal_binary
+                        )
+
+model1 <- lm(daily_total_steps_scaled ~., data = dfPredictors_1)
+
+summary(model1)
+glance(model1) %>%
+  dplyr::select(r.squared, adj.r.squared, sigma, AIC, BIC, p.value)
+```
+
+
+***** Vegetables consumption outcome *****
+
+Time-constant predictors:
+Create an RFE model with 20 constant predictors for vegetables consumption outcome
+```{r}
+set.seed(7)
+# load the library
+library(mlbench)
+library(caret)
+
+# define the control using a random forest selection function
+control <- rfeControl(functions=rfFuncs, method="cv", number=10)
+# run the RFE algorithm.  Use 20 time-constant predictors.
+results <- rfe(dfPredictors_constant[, 1:20], dfPredictors_constant[[24]], sizes=c(1:20), rfeControl=control)
+# summarize the results
+print(results)
+# list the chosen features
+predictors(results)
+# plot the results
+plot(results, type=c("g", "o"))
+
+#display top 10 predictors
+varimp_data <- data.frame(feature = row.names(varImp(results))[1:8],
+                          importance = varImp(results)[1:8, 1])
+#plot top 10 predictors
+ggplot(data = varimp_data, 
+       aes(x = reorder(feature, importance), y = importance, fill = feature)) +
+  geom_bar(stat="identity") + #labs(x = "Features", y = "Variable Importance") + 
+  geom_text(aes(label = round(importance, 2)), vjust=1.6, color="white", size=4) + 
+  theme_bw() + theme(legend.position = "none") + coord_flip() +
+  labs(y = "Variable Importance",
+       x = "Features",
+      color = "blue",
+      linetype = "blue",
+      title = "Top 8 time-constant predictors for daily vegetables portions",
+      subtitle = "Recursive feature elimination",
+      caption = "Data: Intervention data including baseline (wave 0-14)")
+```
+
+Create a linear model with the selected subset of 8 time-constant predictors and identify statistically significant predictors for veg consumption outcome.
+```{r}
+dfPredictors_0 <- data.frame(dfPredictors_constant[c(1:20,24)])
+dfPredictors_1 <- select(dfPredictors_0, daily_total_veg,
+                         survey_pre_ethnicity_fct,
+                         survey_pre_meno_perspective_fct,
+                         survey_pre_meno_stage_fct,
+                         ema_group_exercise_participation_fct,
+                         survey_pre_meno_knowledge_fct,
+                         survey_pre_location_fct,
+                         survey_pre_generation_british_fct,
+                         survey_pre_num_children_fct
+                         )
+model_constant_1 <- lm(daily_total_veg ~., data = dfPredictors_1)
+summary(model_constant_1)
+
+glance(model_constant_1) %>%
+  dplyr::select(r.squared, adj.r.squared, sigma, AIC, BIC, p.value)
+```
+
+Time-varying predictors:
+Create an RFE model with 22 time-varying predictors for veg consumption outcome
+```{r}
+set.seed(7)
+# load the library
+library(mlbench)
+library(caret)
+
+# define the control using a random forest selection function
+control <- rfeControl(functions=rfFuncs, method="cv", number=10)
+# run the RFE algorithm
+results <- rfe(dfPredictors[, 1:22], dfPredictors[[26]], sizes=c(1:22), rfeControl=control)
+# summarize the results
+print(results)
+# list the chosen features
+predictors(results)
+# plot the results
+plot(results, type=c("g", "o"))
+
+#display top 10 predictors
+varimp_data <- data.frame(feature = row.names(varImp(results))[1:10],
+                          importance = varImp(results)[1:10, 1])
+#plot top 10 predictors
+ggplot(data = varimp_data, 
+       aes(x = reorder(feature, importance), y = importance, fill = feature)) +
+  geom_bar(stat="identity") + #labs(x = "Features", y = "Variable Importance") + 
+  geom_text(aes(label = round(importance, 2)), vjust=1.6, color="white", size=4) + 
+  theme_bw() + theme(legend.position = "none") + coord_flip() +
+  labs(y = "Variable Importance",
+       x = "Features",
+      color = "blue",
+      linetype = "blue",
+      title = "Top 10 time-varying predictors for daily vegetable portions",
+      subtitle = "Recursive feature elimination",
+      caption = "Data: Intervention data excluding baseline (wave 0-14)")
+```
+
+Create a linear model with 10 time-varying predictors and identifying those that are statistically significant in predicting veg consumption outcome.
+```{r}
+dfPredictors_0 <- data.frame(dfPredictors[c(1:22,26)])
+dfPredictors_1 <- select(dfPredictors_0, daily_total_veg,
+                         ema_veg_portions_goal, 
+                         ema_dinner_colourful_rating_no_NA,
+                         ema_lunch_colourful_rating_no_NA, 
+                         ema_breakfast_colourful_rating_no_NA,
+                         ema_evening_exercise_plan_binary,
+                         ema_dinner_colourful_rating_binary,
+                         ema_lunch_colourful_rating_binary,
+                         ema_steps_goal_number_no_NA,
+                         ema_daily_total_education_shown,
+                         ema_morning_exercise_plan_binary
+                        )
+model1 <- lm(daily_total_veg ~., data = dfPredictors_1)
+summary(model1)
+glance(model1) %>%
+  dplyr::select(r.squared, adj.r.squared, sigma, AIC, BIC, p.value)
+```
+
+
+
+***** Fruit consumption outcome *****
+
+Time-constant predictors:
+Create an RFE model with 20 constant predictors for fruit consumption outcome
+```{r}
+set.seed(7)
+# load the library
+library(mlbench)
+library(caret)
+
+# define the control using a random forest selection function
+control <- rfeControl(functions=rfFuncs, method="cv", number=10)
+# run the RFE algorithm.  Use 20 time-constant predictors.
+results <- rfe(dfPredictors_constant[, 1:20], dfPredictors_constant[[25]], sizes=c(1:20), rfeControl=control)
+# summarize the results
+print(results)
+# list the chosen features
+predictors(results)
+# plot the results
+plot(results, type=c("g", "o"))
+
+#display top 10 predictors
+varimp_data <- data.frame(feature = row.names(varImp(results))[1:4],
+                          importance = varImp(results)[1:4, 1])
+#plot top 10 predictors
+ggplot(data = varimp_data, 
+       aes(x = reorder(feature, importance), y = importance, fill = feature)) +
+  geom_bar(stat="identity") + #labs(x = "Features", y = "Variable Importance") + 
+  geom_text(aes(label = round(importance, 2)), vjust=1.6, color="white", size=4) + 
+  theme_bw() + theme(legend.position = "none") + coord_flip() +
+  labs(y = "Variable Importance",
+       x = "Features",
+      color = "blue",
+      linetype = "blue",
+      title = "Top 4 time-constant predictors for daily fruit portions",
+      subtitle = "Recursive feature elimination",
+      caption = "Data: Intervention data including baseline (wave 0-14)")
+```
+
+Create a linear model with the selected subset of 4 time-constant predictors and identify statistically significant predictors for fruit consumption outcome.
+```{r}
+dfPredictors_0 <- data.frame(dfPredictors_constant[c(1:20,25)])
+dfPredictors_1 <- select(dfPredictors_0, daily_total_fruit,
+                         survey_pre_location_fct,
+                         survey_pre_marital_status_fct,
+                         ema_group_exercise_participation_fct,
+                         survey_pre_age_group_fct
+                         )
+
+
+model_constant_1 <- lm(daily_total_fruit ~., data = dfPredictors_1)
+summary(model_constant_1)
+
+glance(model_constant_1) %>%
+  dplyr::select(r.squared, adj.r.squared, sigma, AIC, BIC, p.value)
+```
+
+Time-varying predictors:
+Create an RFE model with 22 time-varying predictors for fruit consumption outcome
+```{r}
+set.seed(7)
+# load the library
+library(mlbench)
+library(caret)
+
+# define the control using a random forest selection function
+control <- rfeControl(functions=rfFuncs, method="cv", number=10)
+# run the RFE algorithm
+results <- rfe(dfPredictors[, 1:22], dfPredictors[[27]], sizes=c(1:22), rfeControl=control)
+# summarize the results
+print(results)
+# list the chosen features
+predictors(results)
+# plot the results
+plot(results, type=c("g", "o"))
+
+#display top 10 predictors
+varimp_data <- data.frame(feature = row.names(varImp(results))[1:16],
+                          importance = varImp(results)[1:16, 1])
+#plot top 10 predictors
+ggplot(data = varimp_data, 
+       aes(x = reorder(feature, importance), y = importance, fill = feature)) +
+  geom_bar(stat="identity") + #labs(x = "Features", y = "Variable Importance") + 
+  geom_text(aes(label = round(importance, 2)), vjust=1.6, color="white", size=4) + 
+  theme_bw() + theme(legend.position = "none") + coord_flip() +
+  labs(y = "Variable Importance",
+       x = "Features",
+      color = "blue",
+      linetype = "blue",
+      title = "Top 16 time-varying predictors for daily fruit portions",
+      subtitle = "Recursive feature elimination",
+      caption = "Data: Intervention data excluding baseline (wave 1-14)")
+```
+
+Create a linear model with xxxx time-varying predictors and identifying those that are statistically significant in predicting fruit consumption outcome.
+```{r}
+dfPredictors_0 <- data.frame(dfPredictors[c(1:22,27)])
+
+dfPredictors_1 <- select(dfPredictors_0, daily_total_fruit,
+                         ema_fruit_portions_goal, 
+                         ema_breakfast_colourful_rating_binary,
+                         ema_steps_goal_number_no_NA, 
+                         ema_dinner_colourful_rating_binary,
+                         ema_breakfast_colourful_rating_no_NA,
+                         ema_daily_total_education_shown,
+                         ema_veg_portions_goal,
+                         ema_daily_total_education_read,
+                         ema_morning_exercise_plan_binary,
+                         ema_lunch_colourful_rating_no_NA,
+                         ema_daily_total_surveys_answered,
+                         ema_lunch_colourful_rating_binary,
+                         ema_steps_goal_binary,
+                         ema_group_exercise_participation_binary,
+                         ema_had_alcohol_last_night,
+                         ema_daily_education_library_accessed_binary
+
+                        )
+model1 <- lm(daily_total_fruit ~., data = dfPredictors_1)
+summary(model1)
+glance(model1) %>%
+  dplyr::select(r.squared, adj.r.squared, sigma, AIC, BIC, p.value)
+```
+
+
+***** Water intake (hydration) outcome *****
+
+Time-constant predictors:
+Create an RFE model with 20 constant predictors for water intake outcome
+```{r}
+set.seed(7)
+# load the library
+library(mlbench)
+library(caret)
+
+# define the control using a random forest selection function
+control <- rfeControl(functions=rfFuncs, method="cv", number=10)
+# run the RFE algorithm.  Use 20 time-constant predictors.
+results <- rfe(dfPredictors_constant[, 1:20], dfPredictors_constant[[26]], sizes=c(1:20), rfeControl=control)
+# summarize the results
+print(results)
+# list the chosen features
+predictors(results)
+# plot the results
+plot(results, type=c("g", "o"))
+
+#display top 10 predictors
+varimp_data <- data.frame(feature = row.names(varImp(results))[1:4],
+                          importance = varImp(results)[1:4, 1])
+#plot top 10 predictors
+ggplot(data = varimp_data, 
+       aes(x = reorder(feature, importance), y = importance, fill = feature)) +
+  geom_bar(stat="identity") + #labs(x = "Features", y = "Variable Importance") + 
+  geom_text(aes(label = round(importance, 2)), vjust=1.6, color="white", size=4) + 
+  theme_bw() + theme(legend.position = "none") + coord_flip() +
+  labs(y = "Variable Importance",
+       x = "Features",
+      color = "blue",
+      linetype = "blue",
+      title = "Top 4 time-constant predictors for glasses of water",
+      subtitle = "Recursive feature elimination",
+      caption = "Data: Intervention data including baseline (wave 0-14)")
+```
+
+Create a linear model with the selected subset of 4 time-constant predictors and identify statistically significant predictors for water intake outcome.
+```{r}
+dfPredictors_0 <- data.frame(dfPredictors_constant[c(1:20,26)])
+dfPredictors_1 <- select(dfPredictors_0, daily_total_water,
+                         survey_pre_location_fct,
+                         survey_pre_meno_perspective_fct,
+                         survey_pre_meno_stage_fct,
+                         ema_group_exercise_participation_fct
+                         )
+model_constant_1 <- lm(daily_total_water ~., data = dfPredictors_1)
+summary(model_constant_1)
+
+glance(model_constant_1) %>%
+  dplyr::select(r.squared, adj.r.squared, sigma, AIC, BIC, p.value)
+```
+
+Time-varying predictors:
+Create an RFE model with 22 time-varying predictors for water intake outcome
+```{r}
+set.seed(7)
+# load the library
+library(mlbench)
+library(caret)
+
+# define the control using a random forest selection function
+control <- rfeControl(functions=rfFuncs, method="cv", number=10)
+# run the RFE algorithm
+results <- rfe(dfPredictors[, 1:22], dfPredictors[[28]], sizes=c(1:22), rfeControl=control)
+# summarize the results
+print(results)
+# list the chosen features
+predictors(results)
+# plot the results
+plot(results, type=c("g", "o"))
+
+#display top 10 predictors
+varimp_data <- data.frame(feature = row.names(varImp(results))[1:17],
+                          importance = varImp(results)[1:17, 1])
+#plot top 10 predictors
+ggplot(data = varimp_data, 
+       aes(x = reorder(feature, importance), y = importance, fill = feature)) +
+  geom_bar(stat="identity") + #labs(x = "Features", y = "Variable Importance") + 
+  geom_text(aes(label = round(importance, 2)), vjust=1.6, color="white", size=4) + 
+  theme_bw() + theme(legend.position = "none") + coord_flip() +
+  labs(y = "Variable Importance",
+       x = "Features",
+      color = "blue",
+      linetype = "blue",
+      title = "Top 17 time-varying predictors for glasses of water",
+      subtitle = "Recursive feature elimination",
+      caption = "Data: Intervention data excluding baseline (wave 1-14)")
+```
+
+Create a linear model with 17 time-varying predictors and identifying those that are statistically significant in predicting water intake outcome.
+```{r}
+dfPredictors_0 <- data.frame(dfPredictors[c(1:22,28)])
+dfPredictors_1 <- select(dfPredictors_0, daily_total_water,
+                         ema_veg_portions_goal, 
+                         ema_fruit_portions_goal,
+                         ema_daily_total_education_shown,
+                         ema_steps_goal_number_no_NA,
+                         ema_morning_exercise_plan_binary,
+                         ema_lunch_colourful_rating_no_NA,
+                         ema_had_alcohol_last_night,
+                         ema_evening_exercise_plan_binary,
+                         ema_group_exercise_participation_binary,
+                         ema_achieved_planned_exercise_binary,
+                         ema_lunch_colourful_rating_binary,
+                         ema_daily_total_surveys_answered,
+                         ema_dinner_colourful_rating_no_NA,
+                         ema_daily_total_education_read,
+                         ema_daily_education_library_accessed_binary,
+                         ema_steps_goal_binary,
+                         ema_breakfast_colourful_rating_no_NA
+
+                        )
+model1 <- lm(daily_total_water ~., data = dfPredictors_1)
+summary(model1)
+glance(model1) %>%
+  dplyr::select(r.squared, adj.r.squared, sigma, AIC, BIC, p.value)
+
+```
+
+
+***** Alcohol consumption outcome *****
+
+Time-constant predictors:
+Create an RFE model with 20 constant predictors for alcohol consumption outcome
+```{r}
+set.seed(7)
+# load the library
+library(mlbench)
+library(caret)
+
+# define the control using a random forest selection function
+control <- rfeControl(functions=rfFuncs, method="cv", number=10)
+# run the RFE algorithm.  Use 20 time-constant predictors.
+results <- rfe(dfPredictors_constant[, 1:20], dfPredictors_constant[[28]], sizes=c(1:20), rfeControl=control)
+# summarize the results
+print(results)
+# list the chosen features
+predictors(results)
+# plot the results
+plot(results, type=c("g", "o"))
+
+#display top 10 predictors
+varimp_data <- data.frame(feature = row.names(varImp(results))[1:5],
+                          importance = varImp(results)[1:5, 1])
+#plot top 10 predictors
+ggplot(data = varimp_data, 
+       aes(x = reorder(feature, importance), y = importance, fill = feature)) +
+  geom_bar(stat="identity") + #labs(x = "Features", y = "Variable Importance") + 
+  geom_text(aes(label = round(importance, 2)), vjust=1.6, color="white", size=4) + 
+  theme_bw() + theme(legend.position = "none") + coord_flip() +
+  labs(y = "Variable Importance",
+       x = "Features",
+      color = "blue",
+      linetype = "blue",
+      title = "Top 5 time-constant predictors for daily units of alcoholic beverages",
+      subtitle = "Recursive feature elimination",
+      caption = "Data: Intervention data including baseline (wave 0-14)")
+
+```
+
+Create a linear model with the selected subset of 5 time-constant predictors and identify statistically significant predictors for alcohol consumption outcome.
+```{r}
+dfPredictors_0 <- data.frame(dfPredictors_constant[c(1:20,28)])
+dfPredictors_1 <- select(dfPredictors_0, daily_total_alcohol,
+                         survey_pre_location_fct,
+                         survey_pre_antidepressants_fct,
+                         survey_pre_ethnicity_fct,
+                         survey_pre_HRT_fct,
+                         survey_pre_age_group_fct
+                         )
+
+model_constant_1 <- lm(daily_total_alcohol ~., data = dfPredictors_1)
+summary(model_constant_1)
+
+glance(model_constant_1) %>%
+  dplyr::select(r.squared, adj.r.squared, sigma, AIC, BIC, p.value)
+
+```
+
+Time-varying predictors:
+Create an RFE model with 22 time-varying predictors for alcohol consumption outcome
+```{r}
+set.seed(7)
+# load the library
+library(mlbench)
+library(caret)
+
+# define the control using a random forest selection function
+control <- rfeControl(functions=rfFuncs, method="cv", number=10)
+# run the RFE algorithm
+results <- rfe(dfPredictors[, 1:22], dfPredictors[[30]], sizes=c(1:22), rfeControl=control)
+# summarize the results
+print(results)
+# list the chosen features
+predictors(results)
+# plot the results
+plot(results, type=c("g", "o"))
+
+#display top 10 predictors
+varimp_data <- data.frame(feature = row.names(varImp(results))[1:21],
+                          importance = varImp(results)[1:21, 1])
+#plot top 10 predictors
+ggplot(data = varimp_data, 
+       aes(x = reorder(feature, importance), y = importance, fill = feature)) +
+  geom_bar(stat="identity") + #labs(x = "Features", y = "Variable Importance") + 
+  geom_text(aes(label = round(importance, 2)), vjust=1.6, color="white", size=4) + 
+  theme_bw() + theme(legend.position = "none") + coord_flip() +
+  labs(y = "Variable Importance",
+       x = "Features",
+      color = "blue",
+      linetype = "blue",
+      title = "Top 21 time-varying predictors for daily units of alcohol",
+      subtitle = "Recursive feature elimination",
+      caption = "Data: Intervention data excluding baseline (wve 1-14)")
+
+```
+
+Create a linear model with 21 time-varying predictors and identifying those that are statistically significant in predicting alcohol consumption outcome.
+```{r}
+dfPredictors_0 <- data.frame(dfPredictors[c(1:22,30)])
+
+dfPredictors_1 <- select(dfPredictors_0, daily_total_alcohol,
+                         ema_had_alcohol_last_night, 
+                         ema_steps_goal_number_no_NA,
+                         ema_veg_portions_goal, 
+                         ema_daily_total_education_read,
+                         ema_daily_education_library_accessed_binary,
+                         ema_daily_total_education_shown,
+                         ema_group_exercise_participation_binary,
+                         ema_fruit_portions_goal,
+                         ema_dinner_colourful_rating_no_NA,
+                         ema_lunch_colourful_rating_no_NA,
+                         ema_lunch_colourful_rating_binary,
+                         ema_morning_exercise_plan_binary,
+                         ema_achieved_planned_exercise_binary,
+                         ema_steps_goal_binary,
+                         ema_evening_exercise_plan_binary,
+                         ema_breakfast_colourful_rating_binary,
+                         ema_breakfast_colourful_rating_no_NA,
+                         ema_daily_total_surveys_answered,
+                         ema_human_coach_interaction,
+                         ema_dinner_colourful_rating_binary,
+                         ema_afternoon_exercise_plan_binary
+
+                        )
+model1 <- lm(daily_total_alcohol ~., data = dfPredictors_1)
+summary(model1)
+glance(model1) %>%
+  dplyr::select(r.squared, adj.r.squared, sigma, AIC, BIC, p.value)
+```
+
+
+***** Caffeine consumption outcome *****
+
+Time-constant predictors:
+Create an RFE model with 20 constant predictors for caffeine consumption outcome
+```{r}
+set.seed(7)
+# load the library
+library(mlbench)
+library(caret)
+
+# define the control using a random forest selection function
+control <- rfeControl(functions=rfFuncs, method="cv", number=10)
+# run the RFE algorithm.  Use 20 time-constant predictors.
+results <- rfe(dfPredictors_constant[, 1:20], dfPredictors_constant[[27]], sizes=c(1:20), rfeControl=control)
+# summarize the results
+print(results)
+# list the chosen features
+predictors(results)
+# plot the results
+plot(results, type=c("g", "o"))
+
+#display top 10 predictors
+varimp_data <- data.frame(feature = row.names(varImp(results))[1:5],
+                          importance = varImp(results)[1:5, 1])
+#plot top 10 predictors
+ggplot(data = varimp_data, 
+       aes(x = reorder(feature, importance), y = importance, fill = feature)) +
+  geom_bar(stat="identity") + #labs(x = "Features", y = "Variable Importance") + 
+  geom_text(aes(label = round(importance, 2)), vjust=1.6, color="white", size=4) + 
+  theme_bw() + theme(legend.position = "none") + coord_flip() +
+  labs(y = "Variable Importance",
+       x = "Features",
+      color = "blue",
+      linetype = "blue",
+      title = "Top 5 time-constant predictors for daily cups of coffee",
+      subtitle = "Recursive feature elimination",
+      caption = "Data: Intervention data including baseline (wave 0-14)")
+
+```
+
+Create a linear model with the selected subset of 5 time-constant predictors and identify statistically significant predictors for caffeine consumption outcome.
+```{r}
+dfPredictors_0 <- data.frame(dfPredictors_constant[c(1:20,27)])
+dfPredictors_1 <- select(dfPredictors_0, daily_total_caffeine,
+                         survey_pre_location_fct,
+                         survey_pre_meno_stage_fct,
+                         survey_pre_meno_perspective_fct,
+                         survey_pre_health_status_fct,
+                         survey_pre_ethnicity_fct
+                         )
+model_constant_1 <- lm(daily_total_caffeine ~., data = dfPredictors_1)
+summary(model_constant_1)
+
+glance(model_constant_1) %>%
+  dplyr::select(r.squared, adj.r.squared, sigma, AIC, BIC, p.value)
+
+```
+
+Time-varying predictors:
+Create an RFE model with 22 time-varying predictors for caffeine consumption outcome
+```{r}
+set.seed(7)
+# load the library
+library(mlbench)
+library(caret)
+
+# define the control using a random forest selection function
+control <- rfeControl(functions=rfFuncs, method="cv", number=10)
+# run the RFE algorithm
+results <- rfe(dfPredictors[, 1:22], dfPredictors[[29]], sizes=c(1:22), rfeControl=control)
+# summarize the results
+print(results)
+# list the chosen features
+predictors(results)
+# plot the results
+plot(results, type=c("g", "o"))
+
+#display top 10 predictors
+varimp_data <- data.frame(feature = row.names(varImp(results))[1:10],
+                          importance = varImp(results)[1:10, 1])
+#plot top 10 predictors
+ggplot(data = varimp_data, 
+       aes(x = reorder(feature, importance), y = importance, fill = feature)) +
+  geom_bar(stat="identity") + #labs(x = "Features", y = "Variable Importance") + 
+  geom_text(aes(label = round(importance, 2)), vjust=1.6, color="white", size=4) + 
+  theme_bw() + theme(legend.position = "none") + coord_flip() +
+  labs(y = "Variable Importance",
+       x = "Features",
+      color = "blue",
+      linetype = "blue",
+      title = "Top 10 time-varying predictors for daily cups of coffee",
+      subtitle = "Recursive feature elimination",
+      caption = "Data: Intervention data excluding baseline (wave 1-14)")
+
+```
+
+Create a linear model with 10 time-varying predictors and identifying those that are statistically significant in predicting caffeine consumption outcome.
+```{r}
+dfPredictors_0 <- data.frame(dfPredictors[c(1:22,29)])
+
+dfPredictors_1 <- select(dfPredictors_0, daily_total_caffeine,
+                         ema_daily_total_education_shown, 
+                         ema_steps_goal_number_no_NA,
+                         ema_veg_portions_goal, 
+                         ema_breakfast_colourful_rating_no_NA,
+                         ema_lunch_colourful_rating_no_NA,
+                         ema_daily_total_surveys_answered,
+                         ema_lunch_colourful_rating_binary,
+                         ema_morning_exercise_plan_binary,
+                        ema_had_alcohol_last_night,
+                        ema_fruit_portions_goal
+                        )
+model1 <- lm(daily_total_caffeine ~., data = dfPredictors_1)
+summary(model1)
+glance(model1) %>%
+  dplyr::select(r.squared, adj.r.squared, sigma, AIC, BIC, p.value)
+
+```
+
+
+***** Snacks consumption outcome *****
+
+Time-constant predictors:
+Create an RFE model with 20 constant predictors for snacks consumption outcome
+```{r}
+set.seed(7)
+# load the library
+library(mlbench)
+library(caret)
+
+# define the control using a random forest selection function
+control <- rfeControl(functions=rfFuncs, method="cv", number=10)
+# run the RFE algorithm.  Use 20 time-constant predictors.
+results <- rfe(dfPredictors_constant[, 1:20], dfPredictors_constant[[29]], sizes=c(1:20), rfeControl=control)
+# summarize the results
+print(results)
+# list the chosen features
+predictors(results)
+# plot the results
+plot(results, type=c("g", "o"))
+
+#display top 10 predictors
+varimp_data <- data.frame(feature = row.names(varImp(results))[1:5],
+                          importance = varImp(results)[1:5, 1])
+#plot top 10 predictors
+ggplot(data = varimp_data, 
+       aes(x = reorder(feature, importance), y = importance, fill = feature)) +
+  geom_bar(stat="identity") + 
+  geom_text(aes(label = round(importance, 2)), vjust=1.6, color="white", size=4) + 
+  theme_bw() + theme(legend.position = "none") + coord_flip() +
+  labs(y = "Variable Importance",
+       x = "Features",
+      color = "blue",
+      linetype = "blue",
+      title = "Top 5 time-constant predictors for daily snacks portions",
+      subtitle = "Recursive feature elimination",
+      caption = "Data: Intervention data including baseline (wave 0-14)")
+
+```
+
+Create a linear model with the selected subset of 5 time-constant predictors and identify statistically significant predictors for snacks consumption outcome.
+```{r}
+dfPredictors_0 <- data.frame(dfPredictors_constant[c(1:20,29)])
+dfPredictors_1 <- select(dfPredictors_0, daily_total_snacks,
+                         survey_pre_income_fct,
+                         survey_pre_marital_status_fct,
+                         survey_pre_location_fct,
+                         survey_pre_ethnicity_fct,
+                         survey_pre_health_status_fct
+                         )
+model_constant_1 <- lm(daily_total_snacks ~., data = dfPredictors_1)
+summary(model_constant_1)
+
+glance(model_constant_1) %>%
+  dplyr::select(r.squared, adj.r.squared, sigma, AIC, BIC, p.value)
+
+```
+
+Time-varying predictors:
+Create an RFE model with 22 time-varying predictors for snacks consumption outcome
+```{r}
+set.seed(7)
+# load the library
+library(mlbench)
+library(caret)
+
+# define the control using a random forest selection function
+control <- rfeControl(functions=rfFuncs, method="cv", number=10)
+# run the RFE algorithm
+results <- rfe(dfPredictors[, 1:22], dfPredictors[[31]], sizes=c(1:22), rfeControl=control)
+# summarize the results
+print(results)
+# list the chosen features
+predictors(results)
+# plot the results
+plot(results, type=c("g", "o"))
+
+#display top 10 predictors
+varimp_data <- data.frame(feature = row.names(varImp(results))[1:18],
+                          importance = varImp(results)[1:18, 1])
+#plot top 10 predictors
+ggplot(data = varimp_data, 
+       aes(x = reorder(feature, importance), y = importance, fill = feature)) +
+  geom_bar(stat="identity") + #labs(x = "Features", y = "Variable Importance") + 
+  geom_text(aes(label = round(importance, 2)), vjust=1.6, color="white", size=4) + 
+  theme_bw() + theme(legend.position = "none") + coord_flip() +
+  labs(y = "Variable Importance",
+       x = "Features",
+      color = "blue",
+      linetype = "blue",
+      title = "Top 18 time-varying predictors for daily snack portions",
+      subtitle = "Recursive feature elimination",
+      caption = "Data: Intervention data excluding baseline (wave 1-14)")
+
+```
+
+Create a linear model with 18 time-varying predictors and identifying those that are statistically significant in predicting snacks consumption outcome.
+```{r}
+dfPredictors_0 <- data.frame(dfPredictors[c(1:22,31)])
+
+dfPredictors_1 <- select(dfPredictors_0, daily_total_snacks,
+                         ema_steps_goal_number_no_NA, 
+                         ema_veg_portions_goal,
+                         ema_had_alcohol_last_night, 
+                         ema_breakfast_colourful_rating_no_NA,
+                         ema_group_exercise_participation_binary,
+                         ema_breakfast_colourful_rating_binary,
+                         ema_fruit_portions_goal,
+                         ema_morning_exercise_plan_binary,
+                         ema_sleep_quality_transformed_scale,
+                         ema_daily_total_surveys_answered,
+                         ema_daily_total_education_read,
+                         ema_steps_goal_binary,
+                         ema_lunch_colourful_rating_no_NA,
+                         ema_daily_total_education_shown,
+                         ema_afternoon_exercise_plan_binary,
+                         ema_achieved_planned_exercise_binary,
+                         ema_evening_exercise_plan_binary
+
+                        )
+model1 <- lm(daily_total_snacks ~., data = dfPredictors_1)
+summary(model1)
+glance(model1) %>%
+  dplyr::select(r.squared, adj.r.squared, sigma, AIC, BIC, p.value)
+
+```
+
+
+***** Meals consumption outcome *****
+
+Time-constant predictors:
+Create an RFE model with 20 constant predictors for meals consumption outcome
+```{r}
+set.seed(7)
+# load the library
+library(mlbench)
+library(caret)
+
+# define the control using a random forest selection function
+control <- rfeControl(functions=rfFuncs, method="cv", number=10)
+# run the RFE algorithm.  Use 20 time-constant predictors.
+results <- rfe(dfPredictors_constant[, 1:20], dfPredictors_constant[[30]], sizes=c(1:20), rfeControl=control)
+# summarize the results
+print(results)
+# list the chosen features
+predictors(results)
+# plot the results
+plot(results, type=c("g", "o"))
+
+#display top 10 predictors
+varimp_data <- data.frame(feature = row.names(varImp(results))[1:8],
+                          importance = varImp(results)[1:8, 1])
+#plot top 10 predictors
+ggplot(data = varimp_data, 
+       aes(x = reorder(feature, importance), y = importance, fill = feature)) +
+  geom_bar(stat="identity") + #labs(x = "Features", y = "Variable Importance") + 
+  geom_text(aes(label = round(importance, 2)), vjust=1.6, color="white", size=4) + 
+  theme_bw() + theme(legend.position = "none") + coord_flip() +
+  labs(y = "Variable Importance",
+       x = "Features",
+      color = "blue",
+      linetype = "blue",
+      title = "Top 8 time-constant predictors for daily number of meals",
+      subtitle = "Recursive feature elimination",
+      caption = "Data: Intervention data including baseline (wave 0-14)")
+
+```
+
+Create a linear model with the selected subset of 8 time-constant predictors and identify statistically significant predictors for meals consumption outcome.
+```{r}
+dfPredictors_0 <- data.frame(dfPredictors_constant[c(1:20,30)])
+model_constant_0 <- lm(daily_total_meals ~., data = dfPredictors_0)
+dfPredictors_1 <- select(dfPredictors_0, daily_total_meals,
+                         survey_pre_location_fct,
+                         survey_pre_generation_british_fct,
+                         ema_group_exercise_participation_fct,
+                         survey_pre_marital_status_fct,
+                         survey_pre_meno_perspective_fct,
+                         survey_pre_income_fct,
+                         survey_pre_age_group_fct,
+                         survey_pre_health_status_fct
+                         )
+model_constant_1 <- lm(daily_total_meals ~., data = dfPredictors_1)
+summary(model_constant_1)
+
+glance(model_constant_1) %>%
+  dplyr::select(r.squared, adj.r.squared, sigma, AIC, BIC, p.value)
+```
+
+Time-varying predictors:
+Create an RFE model with 22 time-varying predictors for meals consumption outcome
+```{r}
+set.seed(7)
+# load the library
+library(mlbench)
+library(caret)
+
+# define the control using a random forest selection function
+control <- rfeControl(functions=rfFuncs, method="cv", number=10)
+# run the RFE algorithm
+results <- rfe(dfPredictors[, 1:22], dfPredictors[[32]], sizes=c(1:22), rfeControl=control)
+# summarize the results
+print(results)
+# list the chosen features
+predictors(results)
+# plot the results
+plot(results, type=c("g", "o"))
+
+#display top 10 predictors
+varimp_data <- data.frame(feature = row.names(varImp(results))[1:18],
+                          importance = varImp(results)[1:18, 1])
+#plot top 10 predictors
+ggplot(data = varimp_data, 
+       aes(x = reorder(feature, importance), y = importance, fill = feature)) +
+  geom_bar(stat="identity") + #labs(x = "Features", y = "Variable Importance") + 
+  geom_text(aes(label = round(importance, 2)), vjust=1.6, color="white", size=4) + 
+  theme_bw() + theme(legend.position = "none") + coord_flip() +
+  labs(y = "Variable Importance",
+       x = "Features",
+      color = "blue",
+      linetype = "blue",
+      title = "Top 18 time-varying predictors for daily number of meals",
+      subtitle = "Recursive feature elimination",
+      caption = "Data: Intervention data excluding baseline (wave 1-14)")
+
+```
+
+Create a linear model with 18 time-varying predictors and identifying those that are statistically significant in predicting meals consumption outcome.
+```{r}
+dfPredictors_0 <- data.frame(dfPredictors[c(1:22,32)])
+
+dfPredictors_1 <- select(dfPredictors_0, daily_total_meals,
+                         ema_breakfast_colourful_rating_no_NA, 
+                         ema_breakfast_colourful_rating_binary,
+                         ema_lunch_colourful_rating_no_NA, 
+                         ema_lunch_colourful_rating_binary,
+                         ema_dinner_colourful_rating_binary,
+                         ema_dinner_colourful_rating_no_NA,
+                         ema_group_exercise_participation_binary,
+                         ema_had_alcohol_last_night,
+                         ema_sleep_quality_transformed_scale,
+                         ema_evening_exercise_plan_binary,
+                         ema_steps_goal_number_no_NA,
+                         ema_steps_goal_binary,
+                         ema_morning_exercise_plan_binary,
+                         ema_daily_education_library_accessed_binary,
+                         ema_achieved_planned_exercise_binary,
+                         ema_veg_portions_goal,
+                         ema_daily_total_education_read,
+                         ema_afternoon_exercise_plan_binary
+
+                        )
+model1 <- lm(daily_total_meals ~., data = dfPredictors_1)
+summary(model1)
+glance(model1) %>%
+  dplyr::select(r.squared, adj.r.squared, sigma, AIC, BIC, p.value)
+
+```
+
+
+***** Total sleep minutes (quantity) outcome *****
+
+Time-constant predictors:
+Create an RFE model with 20 constant predictors for sleep quantity outcome
+```{r}
+set.seed(7)
+# load the library
+library(mlbench)
+library(caret)
+
+# define the control using a random forest selection function
+control <- rfeControl(functions=rfFuncs, method="cv", number=10)
+# run the RFE algorithm.  Use 20 time-constant predictors.
+results <- rfe(dfPredictors_constant[, 1:20], dfPredictors_constant[[22]], sizes=c(1:20), rfeControl=control)
+# summarize the results
+print(results)
+# list the chosen features
+predictors(results)
+# plot the results
+plot(results, type=c("g", "o"))
+
+#display top 10 predictors
+varimp_data <- data.frame(feature = row.names(varImp(results))[1:5],
+                          importance = varImp(results)[1:5, 1])
+#plot top 10 predictors
+ggplot(data = varimp_data, 
+       aes(x = reorder(feature, importance), y = importance, fill = feature)) +
+  geom_bar(stat="identity") + #labs(x = "Features", y = "Variable Importance") + 
+  geom_text(aes(label = round(importance, 2)), vjust=1.6, color="white", size=4) + 
+  theme_bw() + theme(legend.position = "none") + coord_flip() +
+  labs(y = "Variable Importance",
+       x = "Features",
+      color = "blue",
+      linetype = "blue",
+      title = "Top 5 time-constant predictors for total sleep time",
+      subtitle = "Recursive feature elimination",
+      caption = "Data: Intervention data including baseline (wave 0-14)")
+```
+
+Create a linear model with the selected subset of 5 time-constant predictors and identify statistically significant predictors for sleep quantity outcome.
+```{r}
+dfPredictors_0 <- data.frame(dfPredictors_constant[c(1:20,22)])
+dfPredictors_1 <- select(dfPredictors_0, daily_total_sleep_scaled,
+                         survey_pre_ethnicity_fct,
+                         survey_pre_meno_perspective_fct,
+                         survey_pre_location_fct,
+                         survey_pre_employment_fct,
+                         survey_pre_income_fct
+                         )
+model_constant_1 <- lm(daily_total_sleep_scaled ~., data = dfPredictors_1)
+summary(model_constant_1)
+
+glance(model_constant_1) %>%
+  dplyr::select(r.squared, adj.r.squared, sigma, AIC, BIC, p.value)
+```
+
+Time-varying predictors:
+Create an RFE model with 22 time-varying predictors for sleep quantity outcome
+```{r}
+set.seed(7)
+# load the library
+library(mlbench)
+library(caret)
+
+# define the control using a random forest selection function
+control <- rfeControl(functions=rfFuncs, method="cv", number=10)
+# run the RFE algorithm
+results <- rfe(dfPredictors[, 1:22], dfPredictors[[24]], sizes=c(1:22), rfeControl=control)
+# summarize the results
+print(results)
+# list the chosen features
+predictors(results)
+# plot the results
+plot(results, type=c("g", "o"))
+
+#display top 10 predictors
+varimp_data <- data.frame(feature = row.names(varImp(results))[1:6],
+                          importance = varImp(results)[1:6, 1])
+#plot top 10 predictors
+ggplot(data = varimp_data, 
+       aes(x = reorder(feature, importance), y = importance, fill = feature)) +
+  geom_bar(stat="identity") + #labs(x = "Features", y = "Variable Importance") + 
+  geom_text(aes(label = round(importance, 2)), vjust=1.6, color="white", size=4) + 
+  theme_bw() + theme(legend.position = "none") + coord_flip() +
+  labs(y = "Variable Importance",
+       x = "Features",
+      color = "blue",
+      linetype = "blue",
+      title = "Top 6 time-varying predictors for total sleep time",
+      subtitle = "Recursive feature elimination",
+      caption = "Data: Intervention data excluding baseline (wave 1-14)")
+```
+
+Create a linear model with 6 time-varying predictors and identifying those that are statistically significant in predicting sleep quantity outcome.
+```{r}
+dfPredictors_0 <- data.frame(dfPredictors[c(1:22,24)])
+dfPredictors_1 <- select(dfPredictors_0, daily_total_sleep_scaled,
+                         ema_daily_total_education_shown, 
+                         ema_steps_goal_number_no_NA,
+                         ema_veg_portions_goal, 
+                         ema_dinner_colourful_rating_no_NA,
+                         ema_fruit_portions_goal,
+                         ema_breakfast_colourful_rating_no_NA                
+                        )
+model1 <- lm(daily_total_sleep_scaled ~., data = dfPredictors_1)
+summary(model1)
+glance(model1) %>%
+  dplyr::select(r.squared, adj.r.squared, sigma, AIC, BIC, p.value)
+```
+
+
+***** Deep sleep minutes (quality) outcome *****
+
+Time-constant predictors:
+Create an RFE model with 20 constant predictors for sleep quality outcome
+```{r}
+set.seed(7)
+# load the library
+library(mlbench)
+library(caret)
+
+# define the control using a random forest selection function
+control <- rfeControl(functions=rfFuncs, method="cv", number=10)
+# run the RFE algorithm.  Use 20 time-constant predictors.
+results <- rfe(dfPredictors_constant[, 1:20], dfPredictors_constant[[23]], sizes=c(1:20), rfeControl=control)
+# summarize the results
+print(results)
+# list the chosen features
+predictors(results)
+# plot the results
+plot(results, type=c("g", "o"))
+
+#display top 10 predictors
+varimp_data <- data.frame(feature = row.names(varImp(results))[1:2],
+                          importance = varImp(results)[1:2, 1])
+#plot top 10 predictors
+ggplot(data = varimp_data, 
+       aes(x = reorder(feature, importance), y = importance, fill = feature)) +
+  geom_bar(stat="identity") + #labs(x = "Features", y = "Variable Importance") + 
+  geom_text(aes(label = round(importance, 2)), vjust=1.6, color="white", size=4) + 
+  theme_bw() + theme(legend.position = "none") + coord_flip() +
+  labs(y = "Variable Importance",
+       x = "Features",
+      color = "blue",
+      linetype = "blue",
+      title = "Top 2 time-constant predictors for deep sleep time",
+      subtitle = "Recursive feature elimination",
+      caption = "Data: Intervention data including baseline (wave 0-14)")
+```
+
+Create a linear model with the selected subset of 2 time-constant predictors and identify statistically significant predictors for sleep quality outcome.
+```{r}
+dfPredictors_0 <- data.frame(dfPredictors_constant[c(1:20,23)])
+dfPredictors_1 <- select(dfPredictors_0, daily_deep_sleep_scaled,
+                         survey_pre_ethnicity_fct,
+                         survey_pre_location_fct
+                         )
+model_constant_1 <- lm(daily_deep_sleep_scaled ~., data = dfPredictors_1)
+summary(model_constant_1)
+
+glance(model_constant_1) %>%
+  dplyr::select(r.squared, adj.r.squared, sigma, AIC, BIC, p.value)
+```
+
+Time-varying predictors:
+Create an RFE model with 22 time-varying predictors for sleep quality outcome
+```{r}
+set.seed(7)
+# load the library
+library(mlbench)
+library(caret)
+
+# define the control using a random forest selection function
+control <- rfeControl(functions=rfFuncs, method="cv", number=10)
+# run the RFE algorithm
+results <- rfe(dfPredictors[, 1:22], dfPredictors[[25]], sizes=c(1:22), rfeControl=control)
+# summarize the results
+print(results)
+# list the chosen features
+predictors(results)
+# plot the results
+plot(results, type=c("g", "o"))
+
+#display top 10 predictors
+varimp_data <- data.frame(feature = row.names(varImp(results))[1:7],
+                          importance = varImp(results)[1:7, 1])
+#plot top 10 predictors
+ggplot(data = varimp_data, 
+       aes(x = reorder(feature, importance), y = importance, fill = feature)) +
+  geom_bar(stat="identity") + #labs(x = "Features", y = "Variable Importance") + 
+  geom_text(aes(label = round(importance, 2)), vjust=1.6, color="white", size=4) + 
+  theme_bw() + theme(legend.position = "none") + coord_flip() +
+  labs(y = "Variable Importance",
+       x = "Features",
+      color = "blue",
+      linetype = "blue",
+      title = "Top 7 time-varying predictors for deep sleep time",
+      subtitle = "Recursive feature elimination",
+      caption = "Data: Intervention data excluding baseline (wave 1-14)")
+```
+
+Create a linear model with 7 time-varying predictors and identifying those that are statistically significant in predicting sleep quality outcome.
+```{r}
+dfPredictors_0 <- data.frame(dfPredictors[c(1:22,25)])
+dfPredictors_1 <- select(dfPredictors_0, daily_deep_sleep_scaled,
+                         ema_steps_goal_number_no_NA,
+                         ema_veg_portions_goal, 
+                         ema_daily_total_education_shown,
+                         ema_afternoon_exercise_plan_binary,
+                         ema_breakfast_colourful_rating_no_NA,
+                         ema_lunch_colourful_rating_no_NA, 
+                         ema_dinner_colourful_rating_no_NA
+
+                        )
+model1 <- lm(daily_deep_sleep_scaled ~., data = dfPredictors_1)
+summary(model1)
+glance(model1) %>%
+  dplyr::select(r.squared, adj.r.squared, sigma, AIC, BIC, p.value)
+```
