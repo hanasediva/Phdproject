@@ -1,0 +1,479 @@
+---
+title: "Thesis_data_cleansing_descriptiveStats"
+author: "Hana Sediva"
+date: "2024-08-15"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+#load libraries
+install.packages("tidyverse") # data management package
+install.packages("dplyr") # data management package
+install.packages("corrplot") # correlation between outcomes
+install.packages("ggcorrplot") # plotting
+
+# install libraries
+library(ggcorrplot)
+library(corrplot)
+library("tidyverse")
+library("dplyr")
+
+```
+
+
+```{r}
+#load data file for additional data cleansing and descriptive statistics
+df_study4_raw_sept = readRDS("C:/R_code/study4/study4_Sept26_cleaned.rds")
+```
+
+
+Data Cleaning Procedure:
+Data cleaning consisted of seven steps to prepare the dataset for analysis. 
+
+Step 1: Removing Post-Intervention Data
+For statistical analysis of daily outcomes, the first waves 0 – 14 were included in the analysis.  Post-intervention exit questionnaire data was analysed for all participants who completed the survey, and therefore this data was initially removed from the dataset. After merging 47 raw data files, the final dataset consisted of 551 records from 37 participants.  The dataset therefore represented 99% (551/555) of the total possible records (37 participants * 15 waves) that could be recorded.
+```{r}
+#create a dataframe with all data
+df_study4_full <- df_study4_raw_sept 
+
+#re-order the fields in the dataframe
+df_study4_full <- select(df_study4_full, p_id, wave, wave0,primary_key, everything())
+# arrange rows by individual id and wave
+df_study4_full <- arrange(df_study4_full, p_id, wave, wave0, primary_key)
+# review number of records left
+nrow(df_study4_full)
+
+#Step 1: remove wave 15, consisting of only post-intervention survey data, not required 
+#for statistical analysis
+df_study4_no_wave15 <- subset(df_study4_full, wave <= 14)
+nrow(df_study4_no_wave15)
+unique(df_study4_no_wave15$p_id)
+n_distinct(df_study4_no_wave15$p_id)
+```
+
+
+Step 2: Removing Records with Missing Steps or Sleep Data
+After removing records where Garmin did not record steps or sleep, the file included 62% (343/551) initial records from 89% (33/37) participants. There were several reasons for not having this data recorded, including:
+•	Technical issues with the Ilumivu connectivity where data was not being transferred from Garmin Connect to Ilumivu server.  Two participants had no physical activity records transferred although all participants had their sleep transferred.
+•	Garmin fitness tracker not being charged.  The participants reported having difficulties charging the device or forgetting to charge it.  Without being charged, the device would not record steps or sleep.
+•	Possibly, not wearing the device, which is difficult to determine given the participants were in their natural environment without supervision.
+```{r}
+#Step 2: Remove records with missing steps and sleep data waves 0 - 14
+df_study4_steps_sleep <- subset(df_study4_no_wave15, 
+                                (!is.na(garmin_exercise_daily_steps) & garmin_exercise_daily_steps != 0) 
+                                &
+                                  (!is.na(garmin_sleep_total_mins) & garmin_sleep_total_mins != 0)
+                                )
+
+nrow(df_study4_steps_sleep)
+unique(df_study4_steps_sleep$p_id)
+n_distinct(df_study4_steps_sleep$p_id)
+```
+
+
+Step 3: Removing Records with Unanswered EMAs
+Each answered EMA survey was stamped by the mEMA app as being answered.  Answered EMA surveys could have been however opened (clicked on) but not necessarily completed.  Although 5 EMAs were triggered daily, input from the participants was required in 4 EMAs daily (i.e., morning, late morning, afternoon, evening) with the 5th EMA providing counselling only.  Removed were 142 records that did not have EMAs stamped as answered in waves 1 – 14.  After removing this data, the file included 36% (201/551) initial records and 86% (32/37) participants.  Furthermore, the participants had an option to skip entering fruit and vegetables portions in the daily surveys, if they did not have breakfast, lunch, or dinner.  There were two options to treat such data: i) Exclude this data because this would result in zero amounts despite goal setting, ii) Include the data because the participants had the option to skip a meal and still participate in the intervention.  Therefore, if the participants reported not having breakfast, lunch or dinner, their fruit and vegetables portions were set to zero for that meal and this data was included in the dataset.
+
+Step 3: Removing Records with Partially Answered EMAs
+Additional 19 records were removed due to being identified as answered but being only partially completed.  This removal resulted in 33% (182/551) of initial records and 86% (32/37) participants.
+
+```{r}
+#Step 3: exclude data with any unanswered EMAs in waves 1 - 14
+dfStudy4_no_missing_EMAs <- subset(df_study4_steps_sleep, 
+                                      !(is.na(ema_morning_answered) | 
+                                         is.na(ema_late_morning_answered) |
+                                          is.na(ema_early_afternoon_answered) | 
+                                         is.na(ema_evening_answered)) | wave == 0
+                                    )
+
+nrow(dfStudy4_no_missing_EMAs)
+unique(dfStudy4_no_missing_EMAs$p_id)
+n_distinct(dfStudy4_no_missing_EMAs$p_id)
+
+#fix records where the participant didn't have a meal
+dfStudy4_no_missing_EMAs$ema_breakfast_fruit_portions[dfStudy4_no_missing_EMAs$ema_had_breakfast == 2] <- 0
+dfStudy4_no_missing_EMAs$ema_breakfast_veg_portions[dfStudy4_no_missing_EMAs$ema_had_breakfast == 2] <- 0
+dfStudy4_no_missing_EMAs$ema_lunch_fruit_portions[dfStudy4_no_missing_EMAs$ema_had_lunch == 2] <- 0
+dfStudy4_no_missing_EMAs$ema_lunch_veg_portions[dfStudy4_no_missing_EMAs$ema_had_lunch == 2] <- 0
+dfStudy4_no_missing_EMAs$ema_dinner_fruit_portions[dfStudy4_no_missing_EMAs$ema_had_dinner == 2] <- 0
+dfStudy4_no_missing_EMAs$ema_dinner_veg_portions[dfStudy4_no_missing_EMAs$ema_had_dinner == 2] <- 0
+
+# fix data for fruit consumption, if participants missed breakfast, lunch, or dinner
+dfStudy4_no_missing_EMAs <- mutate(dfStudy4_no_missing_EMAs, 
+         total_daily_breakfast_fruit = ifelse(!is.na(dfStudy4_no_missing_EMAs$ema_evening_breakfast_fruit_missed) & !is.na(dfStudy4_no_missing_EMAs$ema_breakfast_fruit_portions),
+                                              ema_evening_breakfast_fruit_missed, 
+         (ifelse(is.na(dfStudy4_no_missing_EMAs$ema_evening_breakfast_fruit_missed), ema_breakfast_fruit_portions, 
+                 ema_evening_breakfast_fruit_missed))))
+         
+dfStudy4_no_missing_EMAs <- mutate(dfStudy4_no_missing_EMAs, 
+         total_daily_lunch_fruit = ifelse(!is.na(dfStudy4_no_missing_EMAs$ema_evening_lunch_fruit_missed) & !is.na(dfStudy4_no_missing_EMAs$ema_lunch_fruit_portions),
+                                              ema_evening_lunch_fruit_missed, 
+         (ifelse(is.na(dfStudy4_no_missing_EMAs$ema_evening_lunch_fruit_missed), ema_lunch_fruit_portions, ema_evening_lunch_fruit_missed))))
+         
+
+dfStudy4_no_missing_EMAs <- mutate(dfStudy4_no_missing_EMAs, 
+         total_daily_dinner_fruit = ifelse(!is.na(ema_dinner_fruit_portions),   
+         ema_dinner_fruit_portions, 0))
+
+# fix data for vegetables consumption, if participants missed breakfast, lunch, or dinner     
+dfStudy4_no_missing_EMAs <- mutate(dfStudy4_no_missing_EMAs, 
+         total_daily_breakfast_veg = ifelse(!is.na(dfStudy4_no_missing_EMAs$ema_evening_breakfast_veg_missed) & !is.na(dfStudy4_no_missing_EMAs$ema_breakfast_veg_portions),
+                                              ema_evening_breakfast_veg_missed, 
+         (ifelse(is.na(dfStudy4_no_missing_EMAs$ema_evening_breakfast_veg_missed), ema_breakfast_veg_portions, ema_evening_breakfast_veg_missed))))
+         
+dfStudy4_no_missing_EMAs <- mutate(dfStudy4_no_missing_EMAs, 
+         total_daily_lunch_veg = ifelse(!is.na(dfStudy4_no_missing_EMAs$ema_evening_lunch_veg_missed) & !is.na(dfStudy4_no_missing_EMAs$ema_lunch_veg_portions),
+                                              ema_evening_lunch_veg_missed, 
+         (ifelse(is.na(dfStudy4_no_missing_EMAs$ema_evening_lunch_veg_missed), ema_lunch_veg_portions, ema_evening_lunch_veg_missed))))
+         
+dfStudy4_no_missing_EMAs <- mutate(dfStudy4_no_missing_EMAs, 
+         total_daily_dinner_veg = ifelse(!is.na(ema_dinner_veg_portions),   
+         ema_dinner_veg_portions, 0))
+
+
+dfStudy4_no_missing_EMAs$daily_total_fruit <- rowSums(dfStudy4_no_missing_EMAs[, c("total_daily_breakfast_fruit", "total_daily_lunch_fruit", "total_daily_dinner_fruit")])
+
+dfStudy4_no_missing_EMAs$daily_total_veg <- rowSums(dfStudy4_no_missing_EMAs[, c("total_daily_breakfast_veg", "total_daily_lunch_veg", "total_daily_dinner_veg")])
+
+
+
+#step 3: extract data with missing required outcomes during the intervention (wave 1 - 14)
+df4_missing <- subset(dfStudy4_no_missing_EMAs, wave >= 1 & wave <= 14 & 
+                      ((is.na(ema_breakfast_fruit_portions) & is.na(ema_evening_breakfast_fruit_missed)) |
+                         (is.na(ema_lunch_fruit_portions) & is.na(ema_evening_lunch_fruit_missed)) | 
+                         is.na(ema_dinner_fruit_portions) | is.na(ema_dinner_veg_portions) |
+                        (is.na(ema_breakfast_veg_portions) & is.na(ema_evening_breakfast_veg_missed) ) |
+                         (is.na(ema_lunch_veg_portions) & is.na(ema_evening_lunch_veg_missed) ) | 
+                         is.na(ema_dinner_veg_portions) |
+                         is.na(ema_daily_water_glasses) | 
+                         is.na(ema_daily_caffeine_cups) |
+                         is.na(ema_daily_snacks_portions) |
+                         (is.na(ema_had_alcohol_last_night) & is.na(ema_amount_alcohol_last_night) & is.na(ema_evening_alcohol_units_missed)) |
+                         is.na(garmin_exercise_daily_steps) | garmin_exercise_daily_steps == 0 |
+                         is.na(garmin_sleep_total_mins) | garmin_sleep_total_mins == 0)
+)
+
+nrow(df4_missing)
+unique(df4_missing$primary_key)
+n_distinct(df4_missing$p_id)
+
+
+
+
+#Update wave 0 (baseline) totals for fruit and vegetables consumption                    
+dfStudy4_final <- dfStudy4_no_missing_EMAs %>% anti_join(df4_missing)
+nrow(dfStudy4_final)
+unique(dfStudy4_final$p_id)
+n_distinct(dfStudy4_final$p_id)
+
+
+#total fruit
+dfStudy4_final <- dfStudy4_final %>% 
+  group_by(p_id) %>%
+  arrange(wave) %>%
+  mutate(daily_total_fruit = ifelse(wave == 0 & !is.na(survey_pre_q43_1), survey_pre_q43_1, 
+                                  ifelse(wave == 0 & is.na(survey_pre_q43_1), 0,
+                                         daily_total_fruit))
+  ) %>%
+  ungroup()
+
+#total vegetables
+dfStudy4_final <- dfStudy4_final %>% 
+  group_by(p_id) %>%
+  arrange(wave) %>%
+  mutate(daily_total_veg = ifelse(wave == 0 & !is.na(survey_pre_q44_1), survey_pre_q44_1, 
+                                  ifelse(wave == 0 & is.na(survey_pre_q44_1), 0,
+                                         daily_total_veg))
+  ) %>%
+  ungroup()
+
+
+dfStudy4_final <- dfStudy4_final %>%
+group_by(p_id) %>%
+filter(n() != 1) %>%
+ungroup
+
+nrow(dfStudy4_final)
+unique(dfStudy4_final$p_id)
+n_distinct(dfStudy4_final$p_id)
+```
+
+
+Step 4:  Removing Records with Only Baseline or Only Intervention and No Baseline Data
+Additional eight records were removed from the dataset with missing baseline or intervention days data.  Two records with no baseline and 6 records with only baseline data and not a single full day of intervention data were removed.  The final dataset used for data analysis consisted of 31% (171/551) of initial records and 65% (24/37) participants.  It is important to note that this dataset includes only those observations that had a complete diet, steps, and sleep data for the same day.  The excluded records did not have a complete recoding of diet, steps, and sleep data for the same day to be included. Therefore, the final dataset consisted of full-day responses from 24 participants with a baseline record (wave 0) and a minimum of 1 intervention data record (wave 1 – 14).  The final dataset contains on average 7 days of data per participant (range 3 – 13 days).  Each wave contains data from 11 participants on average (range 6 – 24 participant records) (Figure 15).   Data analysis relevealed that across all intervention days (days 0-14), no-missing data records (i.e., containing data on steps, sleep, daily answered EMAs) were recorded primarily in the early days of the intervention with an average of 46% (11/24) of participants having complete data each day (i.e., wave) of the intervention (median=10; mode=17; range 6-24). 
+```{r}
+#remove participant who is missing baseline
+dfStudy4_final <- subset(dfStudy4_final, p_id != "24483519" & p_id != "82545275")
+nrow(dfStudy4_final)
+unique(dfStudy4_final$p_id)
+n_distinct(dfStudy4_final$p_id)
+
+#create final dataset for data analysis
+dfStudy4_final_intervention <- subset(dfStudy4_final, wave >= 1 & wave <= 14)
+
+```
+
+
+
+
+Step 5: Data Weighting
+To minimise bias and to increase results reliability and validity, weights were implemented to bring the intervention data to a similar scale. Weighting compensates for differences in the respondents’ selection probability and non-response rates. 
+
+```{r}
+#create weight variable 
+
+dfStudy4_final <- mutate(dfStudy4_final, response_weight = 0)
+
+#(p_id == "11779098" |
+dfStudy4_final$response_weight[dfStudy4_final$p_id == '11779098'] <- 1-(nrow(dfStudy4_final[dfStudy4_final$p_id == '11779098', ])/15)
+
+ 
+#p_id == "12981890" |
+dfStudy4_final$response_weight[dfStudy4_final$p_id == '12981890'] <- 1-(nrow(dfStudy4_final[dfStudy4_final$p_id == '12981890', ])/15)
+
+#p_id == "15431169" |
+dfStudy4_final$response_weight[dfStudy4_final$p_id == '15431169'] <- 1-(nrow(dfStudy4_final[dfStudy4_final$p_id == '15431169', ])/15)
+#p_id =="19436405" |
+dfStudy4_final$response_weight[dfStudy4_final$p_id == '19436405'] <- 1-(nrow(dfStudy4_final[dfStudy4_final$p_id == '19436405', ])/15)
+#p_id =="19663473" |
+dfStudy4_final$response_weight[dfStudy4_final$p_id == '19663473'] <- 1-(nrow(dfStudy4_final[dfStudy4_final$p_id == '19663473', ])/15)
+#p_id == "20703294" |
+dfStudy4_final$response_weight[dfStudy4_final$p_id == '20703294'] <- 1-(nrow(dfStudy4_final[dfStudy4_final$p_id == '20703294', ])/15)
+#p_id == "22721164" |
+dfStudy4_final$response_weight[dfStudy4_final$p_id == '22721164'] <- 1-(nrow(dfStudy4_final[dfStudy4_final$p_id == '22721164', ])/15)
+#p_id == "28025920" |
+dfStudy4_final$response_weight[dfStudy4_final$p_id == '28025920'] <- 1-(nrow(dfStudy4_final[dfStudy4_final$p_id == '28025920', ])/15)
+#p_id == "35821427" |
+dfStudy4_final$response_weight[dfStudy4_final$p_id == '35821427'] <- 1-(nrow(dfStudy4_final[dfStudy4_final$p_id == '35821427', ])/15)
+#p_id == "37950503" |
+dfStudy4_final$response_weight[dfStudy4_final$p_id == '37950503'] <- 1-(nrow(dfStudy4_final[dfStudy4_final$p_id == '37950503', ])/15)
+#p_id == "39385673" |
+dfStudy4_final$response_weight[dfStudy4_final$p_id == '39385673'] <- 1-(nrow(dfStudy4_final[dfStudy4_final$p_id == '39385673', ])/15)
+#p_id == "39722835" |
+dfStudy4_final$response_weight[dfStudy4_final$p_id == '39722835'] <- 1-(nrow(dfStudy4_final[dfStudy4_final$p_id == '39722835', ])/15)
+#p_id == "49241918" |
+dfStudy4_final$response_weight[dfStudy4_final$p_id == '49241918'] <- 1-(nrow(dfStudy4_final[dfStudy4_final$p_id == '49241918', ])/15)
+#p_id == "49842571" |
+dfStudy4_final$response_weight[dfStudy4_final$p_id == '49842571'] <- 1-(nrow(dfStudy4_final[dfStudy4_final$p_id == '49842571', ])/15)
+#p_id == "50522107" |
+dfStudy4_final$response_weight[dfStudy4_final$p_id == '50522107'] <- 1-(nrow(dfStudy4_final[dfStudy4_final$p_id == '50522107', ])/15)
+#p_id == "52080478" |
+dfStudy4_final$response_weight[dfStudy4_final$p_id == '52080478'] <- 1-(nrow(dfStudy4_final[dfStudy4_final$p_id == '52080478', ])/15)
+#p_id == "55478635" |
+dfStudy4_final$response_weight[dfStudy4_final$p_id == '55478635'] <- 1-(nrow(dfStudy4_final[dfStudy4_final$p_id == '55478635', ])/15)
+#p_id == "67731447" |
+dfStudy4_final$response_weight[dfStudy4_final$p_id == '67731447'] <- 1-(nrow(dfStudy4_final[dfStudy4_final$p_id == '67731447', ])/15)
+#p_id == "69185659" |
+dfStudy4_final$response_weight[dfStudy4_final$p_id == '69185659'] <- 1-(nrow(dfStudy4_final[dfStudy4_final$p_id == '69185659', ])/15)
+#p_id == "85297032" |
+dfStudy4_final$response_weight[dfStudy4_final$p_id == '85297032'] <- 1-(nrow(dfStudy4_final[dfStudy4_final$p_id == '85297032', ])/15)
+#p_id == "85347320" |
+dfStudy4_final$response_weight[dfStudy4_final$p_id == '85347320'] <- 1-(nrow(dfStudy4_final[dfStudy4_final$p_id == '85347320', ])/15)
+#p_id == "85601659" |
+dfStudy4_final$response_weight[dfStudy4_final$p_id == '85601659'] <- 1-(nrow(dfStudy4_final[dfStudy4_final$p_id == '85601659', ])/15)
+#p_id == "87076103" |
+dfStudy4_final$response_weight[dfStudy4_final$p_id == '87076103'] <- 1-(nrow(dfStudy4_final[dfStudy4_final$p_id == '87076103', ])/15)
+#p_id == "95485425")
+dfStudy4_final$response_weight[dfStudy4_final$p_id == '95485425'] <- 1-(nrow(dfStudy4_final[dfStudy4_final$p_id == '95485425', ])/15)
+```
+
+
+
+Step 6:  Data Scaling
+Data scaling was performed for steps, total sleep, and deep sleep outcomes to bring the data to similar units of tens, as all other outcomes (e.g., glasses of water, cups of coffee, portions of vegetables), instead of hundreds (sleep minutes) and thousands (daily steps).  For example, 8,000 steps were scaled to 8 steps.  Sleep minutes were scaled from for example 400 minutes to 4 minutes. 
+```{r}
+#scaling steps and total and deep sleep
+
+dfStudy4_final <- mutate(dfStudy4_final, 
+                            daily_total_steps_scaled = garmin_exercise_daily_steps / 1000)
+
+
+dfStudy4_final <- mutate(dfStudy4_final, 
+                            daily_total_sleep_scaled = garmin_sleep_total_mins / 100)
+
+dfStudy4_final <- mutate(dfStudy4_final, 
+                            daily_deep_sleep_scaled = garmin_sleep_deep_mins / 100)
+
+
+#create weighted outcomes
+dfStudy4_final <- mutate(dfStudy4_final, 
+                            daily_total_steps_scaled_weighted = 
+                           daily_total_steps_scaled * response_weight)
+
+dfStudy4_final <- mutate(dfStudy4_final, 
+                            daily_total_sleep_scaled_weighted = 
+                           daily_total_sleep_scaled * response_weight)
+
+dfStudy4_final <- mutate(dfStudy4_final, 
+                            daily_deep_sleep_scaled_weighted = 
+                           daily_deep_sleep_scaled * response_weight)
+
+dfStudy4_final <- mutate(dfStudy4_final, 
+                            daily_total_veg_weighted = 
+                           daily_total_veg * response_weight)
+
+dfStudy4_final <- mutate(dfStudy4_final, 
+                            daily_total_fruit_weighted = 
+                           daily_total_fruit * response_weight)
+
+dfStudy4_final <- mutate(dfStudy4_final, 
+                            daily_total_water_weighted = 
+                           daily_total_water * response_weight)
+
+dfStudy4_final <- mutate(dfStudy4_final, 
+                            daily_total_caffeine_weighted = 
+                           daily_total_caffeine * response_weight)
+
+dfStudy4_final <- mutate(dfStudy4_final, 
+                            daily_total_alcohol_weighted = 
+                           daily_total_alcohol * response_weight)
+
+dfStudy4_final <- mutate(dfStudy4_final, 
+                            daily_total_snacks_weighted = 
+                           daily_total_snacks * response_weight)
+
+dfStudy4_final <- mutate(dfStudy4_final, 
+                            daily_total_meal_weighted = 
+                           daily_total_meals * response_weight)
+
+
+
+#create a subset for only intervention data to use in predictor analysis
+dfStudy4_final_intervention <- subset(dfStudy4_final, wave >= 1 & wave <= 14)
+
+```
+
+
+Step 7: Test for Normality in Data Distribution
+Shapiro-wilk normality test shows that all outcome variables are not normally distributed (p< 0.05). All statistical tests therefore applied non-parametric tests, such as Spearman correlation (using weighted formula in R).
+```{r}
+shapiro.test(dfStudy4_final$daily_total_water)
+shapiro.test(dfStudy4_final$daily_total_alcohol)
+shapiro.test(dfStudy4_final$daily_total_caffeine)
+shapiro.test(dfStudy4_final$daily_total_veg)
+shapiro.test(dfStudy4_final$daily_total_fruit)
+shapiro.test(dfStudy4_final$daily_total_snacks)
+shapiro.test(dfStudy4_final$daily_total_meals)
+shapiro.test(dfStudy4_final$garmin_exercise_daily_steps)
+shapiro.test(dfStudy4_final$garmin_sleep_total_mins)
+shapiro.test(dfStudy4_final$garmin_sleep_deep_mins)
+
+```
+
+
+Identify correlations between outcomes
+```{r}
+dfPredictors_outcomes <- subset(dfStudy4_final, select = c(
+
+#10 outcomes
+"daily_total_water",
+"daily_total_fruit",
+"daily_total_veg",
+"daily_total_caffeine",
+"daily_total_alcohol",
+"daily_total_snacks",
+"daily_total_meals",
+"daily_total_sleep_scaled",
+"daily_deep_sleep_scaled",
+"daily_total_steps_scaled"
+
+))
+
+w = dfStudy4_final$response_weight
+
+matStudy4 <- as.matrix(dfPredictors_outcomes)
+
+weighted_corr <- cov.wt(matStudy4, wt = w, cor = TRUE)
+corr_matrix <- weighted_corr$cor
+
+ggcorrplot(corr_matrix, sig.level=0.05, lab_size = 4.5, p.mat = NULL, 
+           insig = c("pch", "blank"), pch = 1, pch.col = "black", pch.cex =1,
+           tl.cex = 14) +
+geom_tile(height=0.8, width=0.8) +
+  theme_minimal() +
+  coord_equal() +
+  labs(x="",y="",fill="Corr", title = "Weighted correlation matrix with outcomes") +
+   theme(axis.text.x=element_text(size=13, angle=45, vjust=1, hjust=1#, 
+                                 #margin=margin(-3,0,0,0)
+                                 ),
+        axis.text.y=element_text(size=13),
+        panel.grid.major=element_blank()) +
+        geom_vline(xintercept=1:ncol(mtcars)-0.5, colour="white", size=2) +
+        geom_hline(yintercept=1:ncol(mtcars)-0.5, colour="white", size=2) 
+
+```
+Steps count data visualisation to get familiar with data
+```{r}
+#initial plotting of daily steps by wave, showing each participant as a separate line
+
+(p3 <- ggplot(dfStudy4_final, aes(wave, garmin_exercise_daily_steps, group = p_id)) +
+geom_line(alpha = 0.2) +
+theme_bw() +
+labs(y = "Daily steps by participant", x = "Wave"))
+```
+Steps count Descriptive statistics:
+summarising daily steps by wave, average steps and variance.  Daily steps fluctuate and eventually decrease in time, while variance seems to increase, indicating that people become less similar in their steps.
+```{r}
+dfStudy4_final %>%
+  group_by(wave) %>%
+  summarise(
+            count = n(),
+            mean  = mean(garmin_exercise_daily_steps, na.rm = TRUE),
+            var   = var(garmin_exercise_daily_steps, na.rm = TRUE),
+            sd    = sd(garmin_exercise_daily_steps, na.rm = TRUE),
+            median = median(garmin_exercise_daily_steps, na.rm = TRUE),
+            IQR = IQR(garmin_exercise_daily_steps, na.rm = TRUE)
+            ) %>%
+   round(digits = 2) %>%
+  ungroup()
+
+dfStudy4_final_intervention <- subset(dfStudy4_final, wave >= 1 & wave <= 14)
+summary(dfStudy4_final_intervention$garmin_exercise_daily_steps)
+sd(dfStudy4_final_intervention$garmin_exercise_daily_steps)
+
+```
+
+Steps count visually for all participants.  Daily steps are fluctuating throughout and trending downwards.
+```{r}
+ggplot(dfStudy4_final, aes(wave, daily_total_steps_scaled, group = p_id)) +
+geom_line(alpha = 0.01) +
+stat_summary(fun = mean, geom = "line",
+group = 1, color = "blue") +
+stat_summary(fun = mean, geom = "point",
+group = 1, size = 3, color = "blue") +
+theme_bw() +
+labs(y = "Steps",
+x = "Wave",
+#color = "blue",
+#linetype = "blue",
+title = "Steps count for all participants (N = 24)",
+subtitle = "Wave 0 - 14",
+caption = "Data: Intervention data including baseline")
+```
+
+
+Steps count visually for each individual.
+```{r}
+ggplot(dfStudy4_final, aes(wave, garmin_exercise_daily_steps, group = p_id)) +
+geom_line() +
+facet_wrap(~ p_id) +
+theme_bw() +
+theme(strip.background = element_blank(),
+strip.text.x = element_blank()) +
+#labs(y = "Steps count", x = "Wave")
+theme_bw() +
+labs(y = "Steps",
+x = "Wave",
+color = "blue",
+linetype = "blue",
+title = "Steps count for each individual participant (N = 24)",
+subtitle = "Wave 0 - 14",
+caption = "Data: Intervention data including baseline")
+
+```
+
